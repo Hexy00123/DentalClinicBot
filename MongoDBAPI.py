@@ -114,6 +114,9 @@ class Collection():
         print(to_send)
         self.collection.insert_one(to_send)
 
+    def remove(self, **kwargs):
+        self.collection.delete_one(kwargs)
+
     def find(self, **kwargs):
         request = self.collection.find_one(kwargs)
         if request:

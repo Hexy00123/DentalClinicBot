@@ -148,6 +148,92 @@ def handle_button(update, context):
     elif button_data == "ask_appeal_accept":
         appeal_accept(update, context)
 
+    elif button_data == "get_appeals":
+        res = [appeal for appeal in db.Appeal if appeal.user_id == user_id]
+        for appeal in res:
+            msg = f"Услуга: {db.Service.find(_id=ObjectId(appeal.service_id)).name}\n" \
+                  f"Врач: {str(db.Doctor.find(_id=ObjectId(appeal.doctor_id)))}\n" \
+                  f"Время: {appeal.time}\n" \
+                  f"Дополнительная информация:\n{appeal.description}"
+
+            buttons = [[InlineKeyboardButton("Отменить запись", callback_data=f"cancel_appeal:{appeal.id()}")]]
+            markup = InlineKeyboardMarkup(buttons)
+
+            context.bot.send_message(chat_id=query.message.chat_id,
+                                     text=msg, reply_markup=markup)
+
+    elif button_data.startswith("cancel_appeal"):
+        appeal_id = ObjectId(button_data.split(":")[1])
+        db.Appeal.remove(_id=appeal_id)
+        context.bot.edit_message_reply_markup(chat_id=query.message.chat_id,
+                                              message_id=update["callback_query"]["message"]["message_id"])
+        context.bot.edit_message_text(chat_id=query.message.chat_id,
+                                      message_id=update["callback_query"]["message"]["message_id"],
+                                      text="Запись отменена")
+
+    elif button_data == "buy_basket":
+        basket = db.Basket.find(user_id=user_id)
+        basket.items = []
+        db.Basket.commit()
+
+        msg = query.message.text.split("Корзина")[0] + "Корзина пуста"
+
+        context.bot.edit_message_text(chat_id=query.message.chat_id,
+                                      message_id=query.message.message_id,
+                                      text=msg,
+                                      reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(
+                                          text="Посмотреть записи к врачам", callback_data="get_appeals")]]))
+
+    elif button_data == "change_busket":
+        tablets = dict()
+        for tablet in db.Basket.find(user_id=user_id).items:
+            if tablet in tablets:
+                tablets[tablet] += 1
+            else:
+                tablets[tablet] = 1
+
+        for tablet in tablets:
+            buttons = [[InlineKeyboardButton("➕", callback_data=f"increment_tablet:{tablet}:{tablets[tablet]}"),
+                        InlineKeyboardButton("➖", callback_data=f"decrement_tablet:{tablet}:{tablets[tablet]}")]]
+            markup = InlineKeyboardMarkup(buttons)
+
+            context.bot.send_message(chat_id=query.message.chat_id,
+                                     text=f"{db.Tablets.find(_id=ObjectId(tablet)).name}: {tablets[tablet]}шт.",
+                                     reply_markup=markup)
+    elif button_data.startswith("increment_tablet"):
+        num = int(button_data.split(":")[2])
+        tablet_id = button_data.split(":")[1]
+        basket = db.Basket.find(user_id=user_id)
+        basket.items = basket.items + [ObjectId(tablet_id)]
+
+        buttons = [[InlineKeyboardButton("➕", callback_data=f"increment_tablet:{tablet_id}:{num + 1}"),
+                    InlineKeyboardButton("➖", callback_data=f"decrement_tablet:{tablet_id}:{num + 1}")]]
+        markup = InlineKeyboardMarkup(buttons)
+
+        context.bot.edit_message_text(chat_id=query.message.chat_id,
+                                      message_id=query.message.message_id,
+                                      text=f"{db.Tablets.find(_id=ObjectId(tablet_id)).name}: {num + 1}шт.",
+                                      reply_markup=markup)
+        db.Basket.commit()
+
+    elif button_data.startswith("decrement_tablet"):
+        num = int(button_data.split(":")[2])
+        tablet_id = button_data.split(":")[1]
+        basket = db.Basket.find(user_id=user_id)
+
+        if num > 0:
+            ind = basket.items.index(ObjectId(tablet_id))
+            basket.items = basket.items[:ind] + basket.items[ind + 1:]
+
+            buttons = [[InlineKeyboardButton("➕", callback_data=f"increment_tablet:{tablet_id}:{num - 1}"),
+                        InlineKeyboardButton("➖", callback_data=f"decrement_tablet:{tablet_id}:{num - 1}")]]
+            markup = InlineKeyboardMarkup(buttons)
+
+            context.bot.edit_message_text(chat_id=query.message.chat_id,
+                                          message_id=query.message.message_id,
+                                          text=f"{db.Tablets.find(_id=ObjectId(tablet_id)).name}: {num - 1}шт.",
+                                          reply_markup=markup)
+            db.Basket.commit()
     query.answer()
 
 
@@ -293,7 +379,14 @@ def menu(update, context):
         whole_cost += cost
     basket_info_message += "-" * 20 + f"\nОбщая стоимость: {whole_cost}"
 
-    update.message.reply_text(user_info_message + "\n" + basket_info_message)
+    buttons = [
+        [InlineKeyboardButton(text="Посмотреть записи к врачам", callback_data="get_appeals")],
+        [InlineKeyboardButton(text="Оплатить корзину", callback_data="buy_basket")],
+        [InlineKeyboardButton(text="Редактировать корзину", callback_data="change_busket")]
+    ]
+    markup = InlineKeyboardMarkup(buttons)
+
+    update.message.reply_text(user_info_message + "\n" + basket_info_message, reply_markup=markup)
 
 
 if __name__ == '__main__':
