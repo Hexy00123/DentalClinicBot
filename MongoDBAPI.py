@@ -1,4 +1,6 @@
+import bson
 import pymongo
+
 from config import CONNECTION_STRING
 
 
@@ -60,7 +62,7 @@ class Collection():
         self.collection: pymongo.collection.Collection = collection
         self.data_type: type = data_type
         self.updates: dict = {}
-        self.acceptable_types = [int, float, str, tuple, list, dict]
+        self.acceptable_types = [int, float, str, tuple, list, dict, bson.ObjectId]
 
         self.data_type.__annotations__["_id"] = str
 

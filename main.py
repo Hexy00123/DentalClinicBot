@@ -9,10 +9,13 @@ from database import *
 # pip install python-telegram-bot
 
 db = DB("Test")
-db.add_collection(User)
+db.add_collection(Appeal)
 db.add_collection(Basket)
-db.add_collection(Tablets)
 db.add_collection(Doctor)
+db.add_collection(Service)
+db.add_collection(Specialisation)
+db.add_collection(Tablets)
+db.add_collection(User)
 
 
 def start(update, context):
@@ -40,18 +43,22 @@ def help(update, context):
 
 
 def registration_step_name(update, context):
+    # TODO: add  validation
     context.user_data["full_name"] = update.message.text
     update.message.reply_text(text='Введите вашу электронную почту.')
     return 2
 
 
 def registration_step_email(update, context):
+    # TODO: add  validation
     context.user_data["email"] = update.message.text
     update.message.reply_text(text='Введите ваш возраст.')
     return 3
 
 
 def registration_step_age(update, context):
+    # TODO: add  validation
+
     buttons = [[InlineKeyboardButton("Да", callback_data="registration_accept"),
                 InlineKeyboardButton("Нет", callback_data="registration_reject")]]
     markup = InlineKeyboardMarkup(buttons)
@@ -81,6 +88,13 @@ def handle_button(update, context):
                 show_doctors(update, context)
             elif button_data == "purchase":
                 medicaments_purchase(update, context)
+            elif button_data == "admission":
+                show_admission(update, context)
+            elif button_data == "initial_examination":
+                choose_doctor(update, context, "Первичная консультация")
+            elif button_data == "certain_service":
+                certain_service(update, context)
+
         else:
             context.bot.send_message(chat_id=query.message.chat_id,
                                      text="Перед пользованием услуг требуется регистрация")
@@ -117,6 +131,23 @@ def handle_button(update, context):
 
         message = f"Товар: {tablet.name} добавлен в корзину"
         context.bot.send_message(chat_id=query.message.chat_id, text=message)
+
+    elif button_data.startswith("service_using"):
+        _, service_id, doctor_id = button_data.split(":")
+        buy_service(update, context, service_id, doctor_id)
+        query.answer()
+        return 4
+
+    elif button_data.startswith("choose_doctor"):
+        choose_doctor(update, context, button_data.split(":")[1])
+
+    elif button_data == "ask_appeal_reject":
+        context.bot.edit_message_reply_markup(chat_id=query.message.chat_id,
+                                              message_id=update["callback_query"]["message"]["message_id"])
+        context.bot.send_message(chat_id=query.message.chat_id, text="Заявка отменена")
+    elif button_data == "ask_appeal_accept":
+        appeal_accept(update, context)
+
     query.answer()
 
 
@@ -124,7 +155,15 @@ def show_doctors(update, context):
     query = update.callback_query
 
     for doctor in db.Doctor:
-        context.bot.send_message(chat_id=query.message.chat_id, text=str(doctor))
+        msg = str(doctor) + "\n" + f"Специализация: {db.Specialisation.find(_id=doctor.specialisation).name}"
+        context.bot.send_message(chat_id=query.message.chat_id, text=msg)
+    query.answer()
+
+
+def show_admission(update, context):
+    query = update.callback_query
+
+    context.bot.send_message(chat_id=query.message.chat_id, text=text_config.admission_message)
     query.answer()
 
 
@@ -139,6 +178,90 @@ def medicaments_purchase(update, context):
         markup = InlineKeyboardMarkup(buttons)
         context.bot.send_message(chat_id=query.message.chat_id, text=str(medicament), reply_markup=markup)
     query.answer()
+
+
+def choose_doctor(update, context, service):
+    query = update.callback_query
+    service_id = db.Service.find(name=service).id()
+    specialisations = [spec.id() for spec in db.Specialisation if service_id in spec.services]
+    doctors = [doctor for doctor in db.Doctor if doctor.specialisation in specialisations]
+
+    for doctor in doctors:
+        buttons = [
+            [InlineKeyboardButton(text="Записаться", callback_data=f"service_using:{service_id}:{doctor.id()}")]]
+        markup = InlineKeyboardMarkup(buttons)
+
+        msg = f"Врач: {str(doctor)}\nСпециализация: {db.Specialisation.find(_id=doctor.specialisation).name}\nУслуга: {service}"
+
+        context.bot.send_message(chat_id=query.message.chat_id, text=msg, reply_markup=markup)
+
+
+def certain_service(update, context):
+    query = update.callback_query
+    buttons = []
+    for service in db.Service:
+        buttons.append([InlineKeyboardButton(text=service.name, callback_data=f"choose_doctor:{service.name}")])
+
+    markup = InlineKeyboardMarkup(buttons)
+    context.bot.send_message(chat_id=query.message.chat_id, text="Выберите интересующую вас услугу",
+                             reply_markup=markup)
+
+
+def buy_service(update, context, service_id, doctor_id):
+    query = update.callback_query
+
+    msg = f"Вы выбрали запись к специалисту: {str(db.Doctor.find(_id=ObjectId(doctor_id)))}\nУслуга: {db.Service.find(_id=ObjectId(service_id)).name}"
+
+    context.user_data["service_id"] = service_id
+    context.user_data["doctor_id"] = doctor_id
+
+    context.user_data["doctor"] = str(db.Doctor.find(_id=ObjectId(doctor_id)))
+    context.user_data["service"] = db.Service.find(_id=ObjectId(service_id)).name
+
+    context.bot.send_message(chat_id=query.message.chat_id, text=msg)
+    context.bot.send_message(chat_id=query.message.chat_id,
+                             text="Для записи, пожалуйста, уточните дату и время, в которое вам было бы удобно посетить врача в формате dd.mm.yyyy hh:mm")
+
+
+def get_date(update, context):
+    # TODO: validation
+
+    update.message.reply_text(f"Выбрана дата: {update.message.text}")
+    context.user_data["date_of_appeal"] = update.message.text
+
+    update.message.reply_text(f"Пожалуйста, уточните детали перед записью")
+    return 5
+
+
+def get_description(update, context):
+    # TODO: add validation
+
+    msg = f"Текущая анкета к специалисту: {context.user_data['doctor']}.\n" \
+          f"Услуга: {context.user_data['service']}\n" \
+          f"Дата и время: {context.user_data['date_of_appeal']}\n" \
+          f"Дополнительная информация:\n{update.message.text}"
+
+    context.user_data["description"] = update.message.text
+
+    buttons = [[InlineKeyboardButton("Всё верно", callback_data="ask_appeal_accept"),
+                InlineKeyboardButton("Отмена", callback_data="ask_appeal_reject")]]
+    markup = InlineKeyboardMarkup(buttons)
+    update.message.reply_text(msg, reply_markup=markup)
+    return ConversationHandler.END
+
+
+def appeal_accept(update, context):
+    query = update.callback_query
+
+    user_id = update["callback_query"]["message"]["chat"]["id"]
+    doctor_id = context.user_data["doctor_id"]
+    service_id = context.user_data["service_id"]
+    time = context.user_data["date_of_appeal"]
+    description = context.user_data["description"]
+    context.bot.edit_message_reply_markup(chat_id=query.message.chat_id,
+                                          message_id=query.message.message_id)
+    db.Appeal.add(user_id=user_id, doctor_id=doctor_id, service_id=service_id, time=time, description=description)
+    context.bot.send_message(chat_id=query.message.chat_id, text="Заявка создана.")
 
 
 def menu(update, context):
@@ -187,10 +310,13 @@ if __name__ == '__main__':
         states={
             1: [MessageHandler(Filters.text, registration_step_name)],
             2: [MessageHandler(Filters.text, registration_step_email)],
-            3: [MessageHandler(Filters.text, registration_step_age)]
+            3: [MessageHandler(Filters.text, registration_step_age)],
+            4: [MessageHandler(Filters.text, get_date)],
+            5: [MessageHandler(Filters.text, get_description)],
         },
         fallbacks=[]
     ))
+
     dispatcher.add_handler(menu_handler)
     dispatcher.add_handler(help_handler)
     dispatcher.add_handler(buttons_handler)
